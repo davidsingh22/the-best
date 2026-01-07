@@ -103,8 +103,10 @@ const CoachView: React.FC<CoachViewProps> = ({ user }) => {
     setStatus('connecting');
 
     const apiKey = process.env.API_KEY;
+    console.log("Initializing Gemini with API Key Presence Check:", !!apiKey);
+    
     if (!apiKey || apiKey === "undefined" || apiKey === "" || apiKey === "null") {
-      setError("The Shaman requires an API Key to enter the sanctuary. Please ensure 'API_KEY' is set in your Vercel settings.");
+      setError("API Key Error: The application is unable to find your Gemini API Key. Please verify that 'API_KEY' is configured in your Vercel Environment Variables.");
       setStatus('idle');
       return;
     }
@@ -121,7 +123,7 @@ const CoachView: React.FC<CoachViewProps> = ({ user }) => {
       audioContextsRef.current = { input: inputCtx, output: outputCtx };
 
       const stream = await navigator.mediaDevices.getUserMedia({ audio: true }).catch(err => {
-        throw new Error("I need your permission to hear you. Please allow microphone access.");
+        throw new Error("Microphone Permission Denied: I need access to your microphone to start the session.");
       });
 
       const sessionPromise = ai.live.connect({
@@ -135,9 +137,7 @@ const CoachView: React.FC<CoachViewProps> = ({ user }) => {
           The user is ${user.name} from ${user.city}, ${user.country}. 
           They have been sober for ${diffDays} days. 
           Act as a deeply compassionate, soulful spiritual guide. 
-          Use metaphors of rebirth, nature, and the inner healer. 
-          Celebrate their ${diffDays} day milestone with warmth.
-          Keep responses concise, soulful, and evocative.`,
+          Celebrate their journey. Keep responses concise and soulful.`,
           inputAudioTranscription: {},
           outputAudioTranscription: {},
         },
@@ -152,8 +152,6 @@ const CoachView: React.FC<CoachViewProps> = ({ user }) => {
             
             scriptProcessor.onaudioprocess = (e) => {
               const inputData = e.inputBuffer.getChannelData(0);
-              
-              // Real-time volume visualization for the UI
               let sum = 0;
               for (let i = 0; i < inputData.length; i++) sum += inputData[i] * inputData[i];
               const rms = Math.sqrt(sum / inputData.length);
@@ -193,15 +191,6 @@ const CoachView: React.FC<CoachViewProps> = ({ user }) => {
               }
             }
 
-            if (message.serverContent?.interrupted) {
-              for (const source of sourcesRef.current) {
-                try { source.stop(); } catch(e) {}
-              }
-              sourcesRef.current.clear();
-              nextStartTimeRef.current = 0;
-              setIsAiSpeaking(false);
-            }
-
             if (message.serverContent?.inputTranscription?.text) {
               currentInputTranscriptionRef.current += message.serverContent.inputTranscription.text;
             }
@@ -212,7 +201,6 @@ const CoachView: React.FC<CoachViewProps> = ({ user }) => {
             if (message.serverContent?.turnComplete) {
               const userText = currentInputTranscriptionRef.current;
               const shamanText = currentOutputTranscriptionRef.current;
-              
               if (userText || shamanText) {
                 setTranscription(prev => [
                   ...prev, 
@@ -220,26 +208,21 @@ const CoachView: React.FC<CoachViewProps> = ({ user }) => {
                   ...(shamanText ? [`Shaman: ${shamanText}`] : [])
                 ]);
               }
-              
               currentInputTranscriptionRef.current = '';
               currentOutputTranscriptionRef.current = '';
             }
           },
           onerror: (e) => {
-            console.error("Sanctuary Connection Lost:", e);
-            setError("The spiritual connection was interrupted. Please breathe and try again.");
+            console.error("Session Error:", e);
+            setError("The spiritual connection was interrupted. Please try again.");
             stopSession();
           },
-          onclose: () => {
-            stopSession();
-          }
+          onclose: () => stopSession()
         }
       });
-
       sessionRef.current = await sessionPromise;
-
     } catch (err: any) {
-      setError(err.message || "The Shaman is temporarily unavailable. Please try again soon.");
+      setError(err.message || "Failed to start session.");
       setStatus('idle');
     }
   };
@@ -261,14 +244,11 @@ const CoachView: React.FC<CoachViewProps> = ({ user }) => {
 
         <div className="flex flex-col items-center justify-center space-y-12 relative z-10">
           <div className="relative group">
-            {/* The Spiritual Orb */}
             <div 
               onClick={status === 'idle' ? startSession : undefined}
               className={`w-56 h-56 md:w-64 md:h-64 rounded-full border border-shaman-gold/20 transition-all duration-1000 flex items-center justify-center cursor-pointer relative
               ${isActive ? 'scale-110 border-shaman-gold/40' : 'hover:border-shaman-gold/50'}`}
             >
-              <div className={`absolute inset-0 rounded-full border border-shaman-gold/10 transition-transform duration-[2000ms] ${isActive ? 'animate-spin-slow' : ''}`} />
-              
               <div className={`w-48 h-48 md:w-56 md:h-56 rounded-full flex items-center justify-center transition-all duration-700 overflow-hidden
                 ${isAiSpeaking ? 'bg-shaman-gold/10 shadow-[0_0_80px_rgba(197,160,89,0.3)]' : 'bg-shaman-moss/5 shadow-inner'}`}>
                 
@@ -294,14 +274,6 @@ const CoachView: React.FC<CoachViewProps> = ({ user }) => {
                   </div>
                 )}
               </div>
-
-              {/* Volume Rings */}
-              {isActive && (
-                <>
-                  <div className="absolute inset-0 rounded-full border border-shaman-gold/20 animate-ping opacity-20" />
-                  <div className="absolute inset-[-20px] rounded-full border border-shaman-gold/5 opacity-40 transition-transform duration-75" style={{ transform: `scale(${1 + inputVolume/300})` }} />
-                </>
-              )}
             </div>
           </div>
 
@@ -341,25 +313,16 @@ const CoachView: React.FC<CoachViewProps> = ({ user }) => {
             )}
           </div>
         </div>
-
-        {/* Decorative corner symbols */}
-        <div className="absolute top-0 left-0 w-32 h-32 border-t border-l border-shaman-gold/10 rounded-tl-[3rem] pointer-events-none"></div>
-        <div className="absolute bottom-0 right-0 w-32 h-32 border-b border-r border-shaman-gold/10 rounded-br-[3rem] pointer-events-none"></div>
       </div>
 
-      {/* Elegant Transcription Mirror */}
       {transcription.length > 0 && (
         <div className="bg-shaman-deep/60 border border-shaman-gold/10 p-8 rounded-[2rem] h-96 overflow-y-auto font-sans shadow-2xl relative scrollbar-hide">
           <div className="flex justify-between items-center mb-8 sticky top-0 bg-shaman-deep/80 backdrop-blur-md py-4 z-20 -mx-8 px-8 border-b border-shaman-gold/5">
             <h4 className="text-shaman-gold uppercase text-[10px] tracking-[0.4em] font-black">Echoes of Insight</h4>
-            <div className="flex items-center space-x-2">
-               <span className="w-1.5 h-1.5 bg-shaman-gold rounded-full animate-pulse"></span>
-               <span className="text-shaman-moss text-[9px] uppercase tracking-widest">Live Presence</span>
-            </div>
           </div>
           <div className="space-y-6">
             {transcription.map((line, idx) => (
-              <div key={idx} className={`flex ${line.startsWith('You:') ? 'justify-end' : 'justify-start'} animate-in slide-in-from-bottom-2 duration-500`}>
+              <div key={idx} className={`flex ${line.startsWith('You:') ? 'justify-end' : 'justify-start'}`}>
                 <div className={`max-w-[85%] px-6 py-4 rounded-3xl ${
                   line.startsWith('You:') 
                     ? 'bg-shaman-moss/10 text-shaman-moss border border-shaman-moss/20' 
