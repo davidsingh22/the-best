@@ -34,6 +34,7 @@
         background-color: #0a1a0a;
         color: #fdfcf8;
         font-family: 'Montserrat', sans-serif;
+        overflow-x: hidden;
       }
       .shaman-gradient {
         background: linear-gradient(135deg, #0a1a0a 0%, #1b3022 100%);
@@ -48,7 +49,6 @@
       .shaman-orb.active {
         box-shadow: 0 0 80px rgba(197, 160, 89, 0.3);
       }
-      /* Hide scrollbar for clean aesthetic */
       .scrollbar-hide::-webkit-scrollbar { display: none; }
       .scrollbar-hide { -ms-overflow-style: none; scrollbar-width: none; }
       
@@ -57,7 +57,7 @@
         to { transform: rotate(360deg); }
       }
       .animate-spin-slow {
-        animation: spin-slow 12s linear infinite;
+        animation: spin-slow 15s linear infinite;
       }
     </style>
 <script type="importmap">

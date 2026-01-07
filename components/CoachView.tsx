@@ -50,6 +50,7 @@ const CoachView: React.FC<CoachViewProps> = ({ user }) => {
   const [inputVolume, setInputVolume] = useState(0);
   const [transcription, setTranscription] = useState<string[]>([]);
   const [error, setError] = useState<string | null>(null);
+  const [apiKeyValid, setApiKeyValid] = useState<boolean | null>(null);
   
   const sessionRef = useRef<any>(null);
   const audioContextsRef = useRef<{ input: AudioContext; output: AudioContext } | null>(null);
@@ -66,11 +67,16 @@ const CoachView: React.FC<CoachViewProps> = ({ user }) => {
   const diffDays = Math.max(1, Math.ceil(Math.abs(now.getTime() - sobrietyStart.getTime()) / (1000 * 60 * 60 * 24)));
 
   useEffect(() => {
+    // Check API Key on mount
+    const key = process.env.API_KEY;
+    setApiKeyValid(!!(key && key !== 'undefined' && key !== 'null' && key !== ''));
+  }, []);
+
+  useEffect(() => {
     transcriptionEndRef.current?.scrollIntoView({ behavior: 'smooth' });
   }, [transcription]);
 
   const stopSession = () => {
-    console.log("Stopping Shaman Session...");
     if (sessionRef.current) {
       try { sessionRef.current.close(); } catch(e) {}
       sessionRef.current = null;
@@ -84,9 +90,9 @@ const CoachView: React.FC<CoachViewProps> = ({ user }) => {
       scriptProcessorRef.current.disconnect();
       scriptProcessorRef.current = null;
     }
-    for (const source of sourcesRef.current) {
+    sourcesRef.current.forEach(source => {
       try { source.stop(); } catch(e) {}
-    }
+    });
     sourcesRef.current.clear();
     setIsActive(false);
     setStatus('idle');
@@ -99,33 +105,28 @@ const CoachView: React.FC<CoachViewProps> = ({ user }) => {
   const startSession = async () => {
     setError(null);
     setStatus('connecting');
-    console.log("Awakening the Shaman...");
 
     const apiKey = process.env.API_KEY;
-    
-    if (!apiKey || apiKey === "undefined" || apiKey === "null" || apiKey === "") {
-      console.error("CRITICAL: API_KEY is missing from the environment.");
-      setError("The Sanctuary's gate is locked. Please ensure your API_KEY is set in Vercel Environment Variables and you have redeployed.");
+    if (!apiKeyValid) {
+      setError("The Sanctuary's gate is locked. Your API Key is missing. Please check your Vercel settings.");
       setStatus('idle');
       return;
     }
 
     try {
-      const ai = new GoogleGenAI({ apiKey });
+      // Must create a new instance each time to ensure key is fresh
+      const ai = new GoogleGenAI({ apiKey: apiKey! });
       
       const inputCtx = new (window.AudioContext || (window as any).webkitAudioContext)({ sampleRate: 16000 });
       const outputCtx = new (window.AudioContext || (window as any).webkitAudioContext)({ sampleRate: 24000 });
       
+      // Critical for mobile/browser autoplay policies
       await inputCtx.resume();
       await outputCtx.resume();
       
       audioContextsRef.current = { input: inputCtx, output: outputCtx };
 
-      const stream = await navigator.mediaDevices.getUserMedia({ audio: true }).catch(err => {
-        throw new Error("I cannot hear you. Please allow microphone access in your browser settings.");
-      });
-
-      console.log("Microphone access granted. Connecting to Live API...");
+      const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
 
       const sessionPromise = ai.live.connect({
         model: 'gemini-2.5-flash-native-audio-preview-12-2025',
@@ -137,14 +138,14 @@ const CoachView: React.FC<CoachViewProps> = ({ user }) => {
           systemInstruction: `You are the Ibogaine Shaman Recovery Coach. 
           The user is ${user.name} from ${user.city}, ${user.country}. 
           They have been sober for ${diffDays} days. 
-          Your tone is deeply spiritual, compassionate, and ancient. 
-          Use the wisdom of the earth. Keep responses brief but meaningful.`,
+          Your tone is deeply spiritual, compassionate, and wise. 
+          Always acknowledge their strength in maintaining ${diffDays} days of sobriety.
+          Respond with warmth and concise spiritual guidance.`,
           inputAudioTranscription: {},
           outputAudioTranscription: {},
         },
         callbacks: {
           onopen: () => {
-            console.log("Connection Established!");
             setStatus('active');
             setIsActive(true);
             
@@ -155,11 +156,11 @@ const CoachView: React.FC<CoachViewProps> = ({ user }) => {
             scriptProcessor.onaudioprocess = (e) => {
               const inputData = e.inputBuffer.getChannelData(0);
               
-              // Volume Meter logic
+              // Simple volume detection for UI
               let sum = 0;
               for (let i = 0; i < inputData.length; i++) sum += inputData[i] * inputData[i];
               const rms = Math.sqrt(sum / inputData.length);
-              setInputVolume(Math.min(100, rms * 500));
+              setInputVolume(rms * 100);
 
               const l = inputData.length;
               const int16 = new Int16Array(l);
@@ -175,6 +176,7 @@ const CoachView: React.FC<CoachViewProps> = ({ user }) => {
             scriptProcessor.connect(inputCtx.destination);
           },
           onmessage: async (message: LiveServerMessage) => {
+            // Audio output logic
             if (message.serverContent?.modelTurn?.parts?.[0]?.inlineData?.data) {
               const audioData = message.serverContent.modelTurn.parts[0].inlineData.data;
               const outCtx = audioContextsRef.current?.output;
@@ -195,6 +197,7 @@ const CoachView: React.FC<CoachViewProps> = ({ user }) => {
               }
             }
 
+            // Transcription logic
             if (message.serverContent?.inputTranscription?.text) {
               currentInputTranscriptionRef.current += message.serverContent.inputTranscription.text;
             }
@@ -203,13 +206,11 @@ const CoachView: React.FC<CoachViewProps> = ({ user }) => {
             }
 
             if (message.serverContent?.turnComplete) {
-              const userText = currentInputTranscriptionRef.current;
-              const shamanText = currentOutputTranscriptionRef.current;
-              if (userText || shamanText) {
+              if (currentInputTranscriptionRef.current || currentOutputTranscriptionRef.current) {
                 setTranscription(prev => [
                   ...prev, 
-                  ...(userText ? [`You: ${userText}`] : []),
-                  ...(shamanText ? [`Shaman: ${shamanText}`] : [])
+                  ...(currentInputTranscriptionRef.current ? [`You: ${currentInputTranscriptionRef.current}`] : []),
+                  ...(currentOutputTranscriptionRef.current ? [`Shaman: ${currentOutputTranscriptionRef.current}`] : [])
                 ]);
               }
               currentInputTranscriptionRef.current = '';
@@ -217,106 +218,115 @@ const CoachView: React.FC<CoachViewProps> = ({ user }) => {
             }
           },
           onerror: (e) => {
-            console.error("Live API Error:", e);
-            setError("The spiritual connection was lost. Please check your internet and try again.");
+            console.error("Live Session Error:", e);
+            setError("The spiritual connection was interrupted. Please try again.");
             stopSession();
           },
-          onclose: () => {
-            console.log("Connection Closed.");
-            stopSession();
-          }
+          onclose: () => stopSession()
         }
       });
       sessionRef.current = await sessionPromise;
     } catch (err: any) {
-      console.error("Failed to start session:", err);
-      setError(err.message || "Failed to awaken the Shaman.");
+      console.error("Initialization Error:", err);
+      setError(err.message || "Failed to enter the sanctuary. Check your microphone permissions.");
       setStatus('idle');
     }
   };
 
   return (
-    <div className="max-w-4xl mx-auto space-y-8 pb-12">
-      <div className="bg-shaman-forest/30 border border-shaman-gold/20 p-8 md:p-12 rounded-[3rem] backdrop-blur-2xl relative overflow-hidden shaman-orb active">
+    <div className="max-w-4xl mx-auto space-y-8 pb-20">
+      <div className="bg-shaman-forest/40 border border-shaman-gold/20 p-8 md:p-12 rounded-[3rem] backdrop-blur-2xl relative overflow-hidden shaman-orb active">
+        
+        {/* Background Decorative Rings */}
+        <div className="absolute inset-0 flex items-center justify-center opacity-5 pointer-events-none">
+          <div className="w-[150%] h-[150%] border-2 border-shaman-gold rounded-full animate-spin-slow" />
+        </div>
+
         <header className="text-center mb-12 relative z-10">
-          <h2 className="text-3xl md:text-4xl font-serif text-shaman-gold gold-text-glow tracking-widest uppercase">Voice Sanctuary</h2>
-          <div className="w-24 h-px bg-shaman-gold/30 mx-auto my-4"></div>
-          <p className="text-shaman-moss font-medium tracking-wide italic">"Speak your truth, the Shaman listens."</p>
+          <h2 className="text-3xl md:text-5xl font-serif text-shaman-gold gold-text-glow tracking-widest uppercase mb-4">Voice Sanctuary</h2>
+          <div className="w-32 h-px bg-shaman-gold/30 mx-auto mb-4"></div>
+          <p className="text-shaman-moss font-medium tracking-wide italic">"Every word is a seed of transformation."</p>
         </header>
 
         {error && (
-          <div className="mb-8 bg-red-900/30 border border-red-500/30 text-red-100 p-6 rounded-2xl text-center font-medium shadow-lg animate-pulse">
+          <div className="mb-8 bg-red-900/20 border border-red-500/30 text-red-200 p-6 rounded-2xl text-center font-medium animate-pulse">
             {error}
+          </div>
+        )}
+
+        {/* API Key Warning for Debugging */}
+        {apiKeyValid === false && (
+          <div className="mb-8 bg-yellow-900/20 border border-yellow-500/30 text-yellow-200 p-4 rounded-xl text-center text-sm">
+             Warning: Your API Key is not detected. Please add 'API_KEY' to your environment variables.
           </div>
         )}
 
         <div className="flex flex-col items-center justify-center space-y-12 relative z-10">
           <div className="relative group">
+            {/* The Orb */}
             <div 
               onClick={status === 'idle' ? startSession : undefined}
-              className={`w-56 h-56 md:w-64 md:h-64 rounded-full border border-shaman-gold/20 transition-all duration-1000 flex items-center justify-center cursor-pointer relative
-              ${isActive ? 'scale-110 border-shaman-gold/40' : 'hover:border-shaman-gold/50'}`}
+              className={`w-64 h-64 md:w-80 md:h-80 rounded-full border border-shaman-gold/10 transition-all duration-1000 flex items-center justify-center cursor-pointer relative
+              ${isActive ? 'scale-105 border-shaman-gold/30' : 'hover:border-shaman-gold/40'}`}
             >
-              {/* Outer Glow Rings */}
-              <div className={`absolute inset-0 rounded-full border border-shaman-gold/10 transition-transform duration-[2000ms] ${isActive ? 'animate-spin-slow' : ''}`} />
-              
-              <div className={`w-48 h-48 md:w-56 md:h-56 rounded-full flex items-center justify-center transition-all duration-700 overflow-hidden
-                ${isAiSpeaking ? 'bg-shaman-gold/10 shadow-[0_0_80px_rgba(197,160,89,0.3)]' : 'bg-shaman-moss/5 shadow-inner'}`}>
+              {/* Inner Energy Pulse */}
+              <div className={`w-56 h-56 md:w-72 md:h-72 rounded-full flex items-center justify-center transition-all duration-700
+                ${isAiSpeaking ? 'bg-shaman-gold/15 shadow-[0_0_100px_rgba(197,160,89,0.4)]' : 'bg-shaman-moss/5 shadow-inner'}`}>
                 
                 {isActive ? (
-                   <div className="flex items-center space-x-2 h-16">
-                      {[1, 2, 3, 4, 5].map(i => (
+                   <div className="flex items-center space-x-2">
+                      {[1, 2, 3, 4, 5, 6, 7].map(i => (
                         <div 
                           key={i} 
-                          className="w-2 bg-shaman-gold rounded-full transition-all duration-100"
+                          className="w-1.5 bg-shaman-gold rounded-full transition-all duration-100"
                           style={{ 
-                            height: `${30 + (inputVolume * (0.4 + Math.random() * 0.6))}%`,
-                            opacity: 0.4 + (i * 0.1)
+                            height: `${20 + (Math.max(inputVolume, isAiSpeaking ? 40 : 0) * (0.4 + Math.random() * 0.6))}%`,
+                            opacity: 0.3 + (i * 0.1)
                           }}
                         />
                       ))}
                    </div>
                 ) : (
-                  <div className="flex flex-col items-center space-y-2 opacity-40 group-hover:opacity-100 transition-opacity">
-                    <svg className="w-16 h-16 text-shaman-gold" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="1" d="M19 11a7 7 0 01-7 7m0 0a7 7 0 01-7-7m7 7v4m0 0H8m4 0h4m-4-8a3 3 0 01-3-3V5a3 3 0 116 0v6a3 3 0 01-3 3z" />
+                  <div className="text-center group-hover:scale-110 transition-transform duration-500">
+                    <svg className="w-20 h-20 text-shaman-gold mb-2 opacity-50" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="0.5" d="M19 11a7 7 0 01-7 7m0 0a7 7 0 01-7-7m7 7v4m0 0H8m4 0h4m-4-8a3 3 0 01-3-3V5a3 3 0 116 0v6a3 3 0 01-3 3z" />
                     </svg>
-                    <span className="text-[10px] uppercase tracking-[0.4em] text-shaman-gold font-bold">Awaken</span>
+                    <span className="text-[10px] uppercase tracking-[0.5em] text-shaman-gold font-bold opacity-60">Awaken</span>
                   </div>
                 )}
               </div>
             </div>
           </div>
 
-          <div className="text-center w-full">
+          <div className="text-center w-full max-w-sm">
             {status === 'idle' && (
               <button 
                 onClick={startSession}
-                className="bg-shaman-gold text-shaman-deep px-16 py-4 rounded-full font-serif font-bold text-xl hover:shadow-[0_0_40px_rgba(197,160,89,0.5)] hover:scale-105 active:scale-95 transition-all duration-500 tracking-widest uppercase"
+                className="w-full bg-shaman-gold text-shaman-deep px-12 py-5 rounded-full font-serif font-bold text-xl hover:shadow-[0_0_50px_rgba(197,160,89,0.4)] hover:scale-105 active:scale-95 transition-all duration-500 tracking-widest uppercase"
               >
                 Begin Ritual
               </button>
             )}
 
             {status === 'connecting' && (
-              <div className="flex flex-col items-center space-y-4">
-                <div className="flex space-x-3">
-                  <div className="w-3 h-3 bg-shaman-gold rounded-full animate-pulse" style={{animationDelay: '0s'}}></div>
-                  <div className="w-3 h-3 bg-shaman-gold rounded-full animate-pulse" style={{animationDelay: '0.3s'}}></div>
-                  <div className="w-3 h-3 bg-shaman-gold rounded-full animate-pulse" style={{animationDelay: '0.6s'}}></div>
+              <div className="flex flex-col items-center space-y-6">
+                <div className="flex space-x-2">
+                  <div className="w-2 h-2 bg-shaman-gold rounded-full animate-bounce" style={{animationDelay: '0s'}}></div>
+                  <div className="w-2 h-2 bg-shaman-gold rounded-full animate-bounce" style={{animationDelay: '0.2s'}}></div>
+                  <div className="w-2 h-2 bg-shaman-gold rounded-full animate-bounce" style={{animationDelay: '0.4s'}}></div>
                 </div>
-                <span className="font-serif italic text-shaman-gold tracking-[0.2em] text-lg uppercase">Connecting...</span>
+                <span className="font-serif italic text-shaman-gold tracking-widest text-lg">Summoning the Shaman...</span>
               </div>
             )}
 
             {status === 'active' && (
-              <div className="space-y-6">
-                <p className="text-shaman-gold font-serif italic text-xl animate-pulse">The Shaman is listening...</p>
+              <div className="space-y-8">
+                <div className="text-shaman-gold font-serif italic text-xl animate-pulse">The Shaman is listening to your heart...</div>
                 <button 
                   onClick={stopSession}
-                  className="bg-transparent border border-shaman-gold/30 text-shaman-moss px-10 py-3 rounded-full hover:bg-shaman-gold/5 hover:text-shaman-gold transition-all duration-300"
+                  className="bg-transparent border border-shaman-gold/30 text-shaman-gold/60 hover:text-shaman-gold px-10 py-3 rounded-full hover:bg-shaman-gold/5 transition-all duration-300 text-xs uppercase tracking-widest font-bold"
                 >
-                  <span className="text-xs uppercase tracking-widest font-bold">End Session</span>
+                  Close the Session
                 </button>
               </div>
             )}
@@ -325,19 +335,22 @@ const CoachView: React.FC<CoachViewProps> = ({ user }) => {
       </div>
 
       {transcription.length > 0 && (
-        <div className="bg-shaman-deep/60 border border-shaman-gold/10 p-8 rounded-[2rem] h-80 overflow-y-auto font-sans scrollbar-hide shadow-2xl">
-          <div className="space-y-4">
+        <div className="bg-shaman-deep/60 border border-shaman-gold/10 p-8 rounded-[2rem] max-h-96 overflow-y-auto font-sans shadow-2xl scrollbar-hide">
+          <h4 className="text-shaman-gold uppercase text-[10px] tracking-[0.4em] font-black mb-8 text-center opacity-50">Sacred Dialogue</h4>
+          <div className="space-y-6">
             {transcription.map((line, idx) => (
               <div key={idx} className={`flex ${line.startsWith('You:') ? 'justify-end' : 'justify-start'}`}>
-                <div className={`max-w-[80%] px-5 py-3 rounded-2xl text-sm ${
-                  line.startsWith('You:') ? 'bg-shaman-moss/20 text-shaman-moss border border-shaman-moss/30' : 'bg-shaman-gold/10 text-shaman-parchment italic border border-shaman-gold/20'
-                }`}>
-                  {line.replace(/^(You:|Shaman:)\s*/, '')}
+                <div className={`max-w-[85%] px-6 py-4 rounded-3xl ${
+                  line.startsWith('You:') 
+                    ? 'bg-shaman-moss/10 text-shaman-moss border border-shaman-moss/20' 
+                    : 'bg-shaman-gold/5 text-shaman-parchment border border-shaman-gold/10 italic'
+                } shadow-sm`}>
+                  <p className="text-sm leading-relaxed">{line.replace(/^(You:|Shaman:)\s*/, '')}</p>
                 </div>
               </div>
             ))}
-            <div ref={transcriptionEndRef} />
           </div>
+          <div ref={transcriptionEndRef} />
         </div>
       )}
     </div>
