@@ -15,7 +15,7 @@ export async function getCoachResponse(
   const start = new Date(user.sobrietyStartDate);
   const now = new Date();
   const diffTime = Math.abs(now.getTime() - start.getTime());
-  const diffDays = Math.ceil(diffTime / (1000 * 60 * 60 * 24));
+  const diffDays = Math.max(1, Math.ceil(diffTime / (1000 * 60 * 60 * 24)));
 
   const systemInstruction = `
     You are the "Ibogaine Shaman Recovery Coach". 
