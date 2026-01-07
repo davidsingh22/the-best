@@ -1,3 +1,4 @@
+
 import React, { useState, useEffect, useRef } from 'react';
 import { GoogleGenAI, LiveServerMessage, Modality } from '@google/genai';
 import { User } from '../types';
@@ -24,7 +25,7 @@ async function decodeAudioData(
   return buffer;
 }
 
-// Simple Base64 encoding for raw bytes
+// Base64 encoding for raw PCM transmission
 function encode(bytes: Uint8Array) {
   let binary = '';
   const len = bytes.byteLength;
@@ -34,7 +35,7 @@ function encode(bytes: Uint8Array) {
   return btoa(binary);
 }
 
-// Simple Base64 decoding
+// Base64 decoding for receiving PCM chunks
 function decode(base64: string) {
   const binaryString = atob(base64);
   const len = binaryString.length;
@@ -60,6 +61,10 @@ const CoachView: React.FC<CoachViewProps> = ({ user }) => {
   const scriptProcessorRef = useRef<ScriptProcessorNode | null>(null);
   const transcriptionEndRef = useRef<HTMLDivElement>(null);
 
+  // Refs for tracking incremental transcriptions
+  const currentInputTranscriptionRef = useRef('');
+  const currentOutputTranscriptionRef = useRef('');
+
   const start = new Date(user.sobrietyStartDate);
   const now = new Date();
   const diffDays = Math.ceil(Math.abs(now.getTime() - start.getTime()) / (1000 * 60 * 60 * 24));
@@ -69,7 +74,6 @@ const CoachView: React.FC<CoachViewProps> = ({ user }) => {
   }, [transcription]);
 
   const stopSession = () => {
-    console.log("Closing sanctuary session...");
     if (sessionRef.current) {
       try { sessionRef.current.close(); } catch(e) {}
       sessionRef.current = null;
@@ -91,22 +95,24 @@ const CoachView: React.FC<CoachViewProps> = ({ user }) => {
     setStatus('idle');
     setIsAiSpeaking(false);
     setInputVolume(0);
+    currentInputTranscriptionRef.current = '';
+    currentOutputTranscriptionRef.current = '';
   };
 
   const startSession = async () => {
-    console.log("Invoking the Shaman...");
     setError(null);
     setStatus('connecting');
 
     const apiKey = process.env.API_KEY;
     if (!apiKey || apiKey === "undefined" || apiKey === "" || apiKey === "null") {
-      setError("API Key is missing from the environment. Please ensure you have added 'API_KEY' in Vercel Project Settings and redeployed with 'Clean Cache'.");
+      setError("API Key is missing. Please ensure you have added 'API_KEY' in environment settings.");
       setStatus('idle');
       return;
     }
 
     try {
-      const ai = new GoogleGenAI({ apiKey });
+      // FIX: Always use process.env.API_KEY directly when initializing GoogleGenAI
+      const ai = new GoogleGenAI({ apiKey: process.env.API_KEY });
       
       const inputCtx = new (window.AudioContext || (window as any).webkitAudioContext)({ sampleRate: 16000 });
       const outputCtx = new (window.AudioContext || (window as any).webkitAudioContext)({ sampleRate: 24000 });
@@ -130,16 +136,15 @@ const CoachView: React.FC<CoachViewProps> = ({ user }) => {
           systemInstruction: `You are the Ibogaine Shaman Recovery Coach. 
           The user is ${user.name} from ${user.city}, ${user.country}. 
           They have been sober for ${diffDays} days. 
-          Be compassionate, soulful, and non-judgmental. 
-          Help them through their struggles and celebrate their milestones. 
-          If they are stressed, offer grounding exercises. 
-          Keep your responses relatively brief but meaningful.`,
+          Act as a deeply compassionate, supportive spiritual guide. 
+          Use metaphors of rebirth, nature, and the inner healer. 
+          Listen actively and respond with empathy. 
+          Acknowledge their milestones. Keep responses concise and soulful.`,
           inputAudioTranscription: {},
           outputAudioTranscription: {},
         },
         callbacks: {
           onopen: () => {
-            console.log("Sanctuary established.");
             setStatus('active');
             setIsActive(true);
             
@@ -150,18 +155,18 @@ const CoachView: React.FC<CoachViewProps> = ({ user }) => {
             scriptProcessor.onaudioprocess = (e) => {
               const inputData = e.inputBuffer.getChannelData(0);
               
-              // Local Volume Meter
+              // Real-time volume visualization
               let sum = 0;
               for (let i = 0; i < inputData.length; i++) sum += inputData[i] * inputData[i];
               const rms = Math.sqrt(sum / inputData.length);
-              setInputVolume(Math.min(100, rms * 500));
+              setInputVolume(Math.min(150, rms * 800));
 
-              // PCM 16 Conversion
               const l = inputData.length;
               const int16 = new Int16Array(l);
               for (let i = 0; i < l; i++) int16[i] = inputData[i] * 32768;
               const base64Data = encode(new Uint8Array(int16.buffer));
               
+              // FIX: Ensure sendRealtimeInput is called only after the session promise resolves to avoid race conditions
               sessionPromise.then((session) => {
                 session.sendRealtimeInput({ media: { data: base64Data, mimeType: 'audio/pcm;rate=16000' } });
               });
@@ -171,7 +176,7 @@ const CoachView: React.FC<CoachViewProps> = ({ user }) => {
             scriptProcessor.connect(inputCtx.destination);
           },
           onmessage: async (message: LiveServerMessage) => {
-            // Handle Audio Playback
+            // Process Output Audio
             if (message.serverContent?.modelTurn?.parts?.[0]?.inlineData?.data) {
               const audioData = message.serverContent.modelTurn.parts[0].inlineData.data;
               const outCtx = audioContextsRef.current?.output;
@@ -181,10 +186,11 @@ const CoachView: React.FC<CoachViewProps> = ({ user }) => {
                 const source = outCtx.createBufferSource();
                 source.buffer = buffer;
                 source.connect(outCtx.destination);
-                source.onended = () => {
+                // FIX: Use addEventListener for the 'ended' event to properly track playback state
+                source.addEventListener('ended', () => {
                   sourcesRef.current.delete(source);
                   if (sourcesRef.current.size === 0) setIsAiSpeaking(false);
-                };
+                });
                 sourcesRef.current.add(source);
                 setIsAiSpeaking(true);
                 source.start(nextStartTimeRef.current);
@@ -192,7 +198,7 @@ const CoachView: React.FC<CoachViewProps> = ({ user }) => {
               }
             }
 
-            // Handle Interruptions
+            // Handle User Interruption
             if (message.serverContent?.interrupted) {
               for (const source of sourcesRef.current) {
                 try { source.stop(); } catch(e) {}
@@ -202,21 +208,36 @@ const CoachView: React.FC<CoachViewProps> = ({ user }) => {
               setIsAiSpeaking(false);
             }
 
-            // Handle Transcriptions
+            // FIX: Implement incremental transcription tracking and turn-based UI updates
             if (message.serverContent?.inputTranscription?.text) {
-              setTranscription(prev => [...prev, `You: ${message.serverContent?.inputTranscription?.text}`]);
+              currentInputTranscriptionRef.current += message.serverContent.inputTranscription.text;
             }
             if (message.serverContent?.outputTranscription?.text) {
-              setTranscription(prev => [...prev, `Shaman: ${message.serverContent?.outputTranscription?.text}`]);
+              currentOutputTranscriptionRef.current += message.serverContent.outputTranscription.text;
+            }
+
+            if (message.serverContent?.turnComplete) {
+              const userText = currentInputTranscriptionRef.current;
+              const shamanText = currentOutputTranscriptionRef.current;
+              
+              if (userText || shamanText) {
+                setTranscription(prev => [
+                  ...prev, 
+                  ...(userText ? [`You: ${userText}`] : []),
+                  ...(shamanText ? [`Shaman: ${shamanText}`] : [])
+                ]);
+              }
+              
+              currentInputTranscriptionRef.current = '';
+              currentOutputTranscriptionRef.current = '';
             }
           },
           onerror: (e) => {
-            console.error("Sanctuary Error:", e);
-            setError("The connection was lost. Please try reconnecting.");
+            console.error("Connection Error:", e);
+            setError("The spiritual connection was interrupted. Please try again.");
             stopSession();
           },
           onclose: () => {
-            console.log("Sanctuary closed.");
             stopSession();
           }
         }
@@ -225,93 +246,126 @@ const CoachView: React.FC<CoachViewProps> = ({ user }) => {
       sessionRef.current = await sessionPromise;
 
     } catch (err: any) {
-      console.error("Sanctuary Failed:", err);
-      setError(err.message || "Could not connect to the Shaman.");
+      console.error("Session Start Failed:", err);
+      setError(err.message || "Could not establish connection.");
       setStatus('idle');
     }
   };
 
   return (
-    <div className="max-w-4xl mx-auto space-y-6">
-      <div className="bg-shaman-forest/40 border border-shaman-gold/30 p-8 rounded-3xl backdrop-blur-md relative overflow-hidden">
-        <header className="text-center mb-8 relative z-10">
-          <h2 className="text-3xl font-serif text-shaman-gold gold-text-glow">Voice Sanctuary</h2>
-          <p className="text-shaman-moss">Speak freely. You are in a safe, healing space.</p>
+    <div className="max-w-4xl mx-auto space-y-8 pb-12">
+      <div className="bg-shaman-forest/40 border border-shaman-gold/30 p-10 rounded-[3rem] backdrop-blur-xl relative overflow-hidden shaman-orb active">
+        <header className="text-center mb-10 relative z-10">
+          <h2 className="text-4xl font-serif text-shaman-gold gold-text-glow mb-2">Voice Sanctuary</h2>
+          <p className="text-shaman-moss font-medium tracking-wide">Enter into stillness and speak your truth.</p>
         </header>
 
         {error && (
-          <div className="mb-6 bg-red-900/20 border border-red-500/50 text-red-200 p-4 rounded-xl text-center">
+          <div className="mb-8 bg-red-900/30 border border-red-500/50 text-red-200 p-5 rounded-2xl text-center font-medium">
             {error}
           </div>
         )}
 
-        <div className="flex flex-col items-center justify-center space-y-8 relative z-10">
-          {/* Central Pulsing Orb */}
-          <div className="relative">
-            <div className={`w-32 h-32 rounded-full border-2 transition-all duration-700 flex items-center justify-center
-              ${isActive ? 'border-shaman-gold scale-110 shadow-[0_0_30px_rgba(197,160,89,0.4)]' : 'border-shaman-moss/30 opacity-60'}`}>
-              <div className={`w-24 h-24 rounded-full flex items-center justify-center transition-all duration-500
-                ${isAiSpeaking ? 'bg-shaman-gold/40 animate-pulse' : 'bg-shaman-moss/20'}`}>
-                <svg className={`w-12 h-12 ${isActive ? 'text-shaman-gold' : 'text-shaman-moss'}`} fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="1.5" d="M19 11a7 7 0 01-7 7m0 0a7 7 0 01-7-7m7 7v4m0 0H8m4 0h4m-4-8a3 3 0 01-3-3V5a3 3 0 116 0v6a3 3 0 01-3 3z" />
-                </svg>
+        <div className="flex flex-col items-center justify-center space-y-12 relative z-10">
+          {/* Central Animated Shamanic Orb */}
+          <div className="relative group cursor-pointer" onClick={status === 'idle' ? startSession : undefined}>
+            <div className={`w-48 h-48 rounded-full border-2 transition-all duration-1000 flex items-center justify-center
+              ${isActive ? 'border-shaman-gold scale-110' : 'border-shaman-moss/40 hover:border-shaman-gold/60'}`}>
+              
+              <div className={`w-40 h-40 rounded-full flex items-center justify-center transition-all duration-700
+                ${isAiSpeaking ? 'bg-shaman-gold/30 shadow-[0_0_60px_rgba(197,160,89,0.5)]' : 'bg-shaman-moss/20 shadow-inner'}`}>
+                
+                {isActive ? (
+                   <div className="flex items-end space-x-1 h-12">
+                      {[1, 2, 3, 4, 5].map(i => (
+                        <div 
+                          key={i} 
+                          className="w-1.5 bg-shaman-gold rounded-full transition-all duration-75"
+                          style={{ 
+                            height: `${Math.max(10, inputVolume * (0.5 + Math.random()))}%`,
+                            opacity: 0.4 + (i * 0.1)
+                          }}
+                        />
+                      ))}
+                   </div>
+                ) : (
+                  <svg className="w-16 h-16 text-shaman-gold opacity-60" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="1" d="M19 11a7 7 0 01-7 7m0 0a7 7 0 01-7-7m7 7v4m0 0H8m4 0h4m-4-8a3 3 0 01-3-3V5a3 3 0 116 0v6a3 3 0 01-3 3z" />
+                  </svg>
+                )}
               </div>
             </div>
             
-            {/* Input Volume Ring */}
+            {/* Reactive Pulse Rings */}
             {isActive && (
-              <div 
-                className="absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 rounded-full border border-shaman-gold/30 transition-transform duration-75"
-                style={{ width: `${128 + inputVolume}px`, height: `${128 + inputVolume}px` }}
-              />
+              <>
+                <div className="absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 w-56 h-56 rounded-full border border-shaman-gold/10 animate-ping" />
+                <div className="absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 w-64 h-64 rounded-full border border-shaman-gold/5" style={{ transform: `translate(-50%, -50%) scale(${1 + inputVolume/500})` }} />
+              </>
             )}
           </div>
 
-          <div className="text-center space-y-4">
+          <div className="text-center space-y-6">
             {status === 'idle' && (
               <button 
                 onClick={startSession}
-                className="bg-shaman-gold text-shaman-deep px-8 py-3 rounded-full font-serif font-bold text-lg hover:shadow-[0_0_20px_rgba(197,160,89,0.5)] transition-all"
+                className="bg-shaman-gold text-shaman-deep px-12 py-4 rounded-full font-serif font-bold text-xl hover:shadow-[0_0_30px_rgba(197,160,89,0.6)] hover:scale-105 transition-all duration-300"
               >
-                Invoke the Shaman
+                Begin Ritual
               </button>
             )}
 
             {status === 'connecting' && (
-              <div className="flex items-center space-x-2 text-shaman-gold">
-                <div className="w-2 h-2 bg-shaman-gold rounded-full animate-bounce" style={{animationDelay: '0s'}}></div>
-                <div className="w-2 h-2 bg-shaman-gold rounded-full animate-bounce" style={{animationDelay: '0.2s'}}></div>
-                <div className="w-2 h-2 bg-shaman-gold rounded-full animate-bounce" style={{animationDelay: '0.4s'}}></div>
-                <span className="font-serif italic">Establishing Sanctuary...</span>
+              <div className="flex flex-col items-center space-y-3">
+                <div className="flex space-x-2">
+                  <div className="w-3 h-3 bg-shaman-gold rounded-full animate-bounce" style={{animationDelay: '0s'}}></div>
+                  <div className="w-3 h-3 bg-shaman-gold rounded-full animate-bounce" style={{animationDelay: '0.2s'}}></div>
+                  <div className="w-3 h-3 bg-shaman-gold rounded-full animate-bounce" style={{animationDelay: '0.4s'}}></div>
+                </div>
+                <span className="font-serif italic text-shaman-gold tracking-widest text-lg">Calling the Shaman...</span>
               </div>
             )}
 
             {status === 'active' && (
               <button 
                 onClick={stopSession}
-                className="bg-shaman-moss/20 border border-shaman-moss text-shaman-parchment px-8 py-3 rounded-full hover:bg-shaman-moss/40 transition-all"
+                className="bg-shaman-deep/60 border border-shaman-moss text-shaman-parchment px-10 py-3 rounded-full hover:bg-shaman-moss/20 hover:text-shaman-gold transition-all duration-300 group"
               >
-                Close Sanctuary
+                <span className="flex items-center space-x-2">
+                  <span className="w-2 h-2 bg-shaman-gold rounded-full group-hover:animate-ping"></span>
+                  <span>End Session</span>
+                </span>
               </button>
             )}
           </div>
         </div>
 
-        {/* Floating Ornaments */}
-        <div className="absolute top-0 left-0 p-8 opacity-5 pointer-events-none">
-          <svg className="w-32 h-32 text-shaman-gold" fill="currentColor" viewBox="0 0 24 24"><path d="M12 2L15.09 8.26L22 9.27L17 14.14L18.18 21.02L12 17.77L5.82 21.02L7 14.14L2 9.27L8.91 8.26L12 2Z"/></svg>
+        {/* Shamanic Symbols */}
+        <div className="absolute -top-10 -right-10 opacity-[0.03] pointer-events-none rotate-12">
+          <svg className="w-64 h-64 text-shaman-gold" fill="currentColor" viewBox="0 0 24 24"><path d="M12 2L15.09 8.26L22 9.27L17 14.14L18.18 21.02L12 17.77L5.82 21.02L7 14.14L2 9.27L8.91 8.26L12 2Z"/></svg>
         </div>
       </div>
 
-      {/* Transcription Area */}
+      {/* Transcription View */}
       {transcription.length > 0 && (
-        <div className="bg-shaman-deep/60 border border-shaman-gold/10 p-6 rounded-2xl h-64 overflow-y-auto font-sans text-sm space-y-3 scrollbar-hide">
-          <h4 className="text-shaman-gold uppercase text-[10px] tracking-widest mb-4 sticky top-0 bg-shaman-deep/80 py-1">Sanctuary Transcription</h4>
-          {transcription.map((line, idx) => (
-            <p key={idx} className={`${line.startsWith('You:') ? 'text-shaman-moss' : 'text-shaman-parchment italic'} leading-relaxed`}>
-              {line}
-            </p>
-          ))}
+        <div className="bg-shaman-deep/80 border border-shaman-gold/10 p-8 rounded-[2rem] h-80 overflow-y-auto font-sans shadow-2xl relative">
+          <div className="flex justify-between items-center mb-6 sticky top-0 bg-shaman-deep/90 py-2 z-20">
+            <h4 className="text-shaman-gold uppercase text-xs tracking-[0.3em] font-bold">Session History</h4>
+            <span className="text-shaman-moss text-[10px] bg-shaman-moss/10 px-3 py-1 rounded-full uppercase">Real-time Echo</span>
+          </div>
+          <div className="space-y-4">
+            {transcription.map((line, idx) => (
+              <div key={idx} className={`flex ${line.startsWith('You:') ? 'justify-end' : 'justify-start'}`}>
+                <div className={`max-w-[85%] px-5 py-3 rounded-2xl ${
+                  line.startsWith('You:') 
+                    ? 'bg-shaman-moss/10 text-shaman-moss border border-shaman-moss/20' 
+                    : 'bg-shaman-gold/5 text-shaman-parchment border border-shaman-gold/10 italic'
+                }`}>
+                  <p className="text-sm leading-relaxed">{line.replace(/^(You:|Shaman:)\s*/, '')}</p>
+                </div>
+              </div>
+            ))}
+          </div>
           <div ref={transcriptionEndRef} />
         </div>
       )}
