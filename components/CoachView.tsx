@@ -1,4 +1,3 @@
-
 import React, { useState, useEffect, useRef } from 'react';
 import { GoogleGenAI, LiveServerMessage, Modality } from '@google/genai';
 import { User } from '../types';
@@ -99,9 +98,11 @@ const CoachView: React.FC<CoachViewProps> = ({ user }) => {
     setError(null);
     setStatus('connecting');
 
+    // Check for process.env.API_KEY. 
+    // Sometimes build tools inject the string "undefined" if it's missing.
     const apiKey = process.env.API_KEY;
-    if (!apiKey) {
-      setError("API Key is missing. Ensure it is set in Vercel environment variables.");
+    if (!apiKey || apiKey === "undefined" || apiKey === "") {
+      setError("API Key is missing from the environment. Please add API_KEY to your Vercel Project Settings and redeploy.");
       setStatus('idle');
       return;
     }

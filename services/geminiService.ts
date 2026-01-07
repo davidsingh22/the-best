@@ -1,4 +1,3 @@
-
 import { GoogleGenAI } from "@google/genai";
 import { ChatMessage, User } from "../types";
 
@@ -9,7 +8,8 @@ export async function getCoachResponse(
   history: ChatMessage[],
   newMessage: string
 ) {
-  const ai = new GoogleGenAI({ apiKey: process.env.API_KEY || '' });
+  // Use the injected process.env.API_KEY directly
+  const ai = new GoogleGenAI({ apiKey: process.env.API_KEY });
   
   // Calculate sobriety days
   const start = new Date(user.sobrietyStartDate);
