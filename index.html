@@ -39,14 +39,18 @@
         background: linear-gradient(135deg, #0a1a0a 0%, #1b3022 100%);
       }
       .gold-text-glow {
-        text-shadow: 0 0 10px rgba(197, 160, 89, 0.3);
+        text-shadow: 0 0 15px rgba(197, 160, 89, 0.4);
       }
       .shaman-orb {
-        box-shadow: 0 0 50px rgba(197, 160, 89, 0.1);
+        box-shadow: 0 0 50px rgba(197, 160, 89, 0.05);
+        transition: all 0.5s cubic-bezier(0.4, 0, 0.2, 1);
       }
       .shaman-orb.active {
-        box-shadow: 0 0 80px rgba(197, 160, 89, 0.4);
+        box-shadow: 0 0 80px rgba(197, 160, 89, 0.3);
       }
+      /* Hide scrollbar for clean aesthetic */
+      .scrollbar-hide::-webkit-scrollbar { display: none; }
+      .scrollbar-hide { -ms-overflow-style: none; scrollbar-width: none; }
     </style>
 <script type="importmap">
 {
