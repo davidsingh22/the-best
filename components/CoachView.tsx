@@ -98,11 +98,9 @@ const CoachView: React.FC<CoachViewProps> = ({ user }) => {
     setError(null);
     setStatus('connecting');
 
-    // Check for process.env.API_KEY. 
-    // Sometimes build tools inject the string "undefined" if it's missing.
     const apiKey = process.env.API_KEY;
-    if (!apiKey || apiKey === "undefined" || apiKey === "") {
-      setError("API Key is missing from the environment. Please add API_KEY to your Vercel Project Settings and redeploy.");
+    if (!apiKey || apiKey === "undefined" || apiKey === "" || apiKey === "null") {
+      setError("API Key is missing from the environment. Please ensure you have added 'API_KEY' in Vercel Project Settings and redeployed with 'Clean Cache'.");
       setStatus('idle');
       return;
     }
