@@ -1,0 +1,8 @@
+{
+  "name": "Ibogaine Shaman Recovery Coach",
+  "description": "A compassionate AI-powered personal recovery coach designed to support individuals on their sobriety and healing journey with persistent memory and progress tracking.",
+  "requestFramePermissions": [
+    "camera",
+    "microphone"
+  ]
+}
